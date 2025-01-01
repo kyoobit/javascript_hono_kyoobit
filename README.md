@@ -1,6 +1,3 @@
-cd ~/repos/javascript/javascript_hono_kyoobit
-
-
 # JavaScript Hono Kyoobit
 
 A simple single page site, build on the JavaScript Hono framework to create an endpoint using Cloudflare's serverless Workers and R2 object storage platform services.
@@ -33,6 +30,7 @@ Create and use a local R2 storage bucket named "public" (.wrangler/state/v3/r2/p
 
 ```shell
 npx wrangler r2 object put public/css/example.css --file public/css/example.css --local
+npx wrangler r2 object put kyoobit-r2-production/css/example.css --file public/css/example.css
 ```
 
 Run the development server:
@@ -46,12 +44,6 @@ Test requests:
 ```shell
 curl -i http://localhost:8787/
 curl -i http://localhost:8787/css/example.css
-```
-
-Replace the production bucket name with a real value to deploy to production:
-
-```shell
-sed -i 's|<PROD_BUCKET_NAME>|YOUR-BUCKET-NAME|' wrangler.toml
 ```
 
 Deploy the service to Cloudflare:
