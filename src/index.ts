@@ -3,6 +3,33 @@ import { html, raw } from 'hono/html';
 
 const app = new Hono();
 
+app.use('*', async (c, next) => {
+    await next()
+
+    const logging_endpoint = c.env.LOGGING_ENDPOINT;
+
+    // Log this information
+    const log_payload = {
+        path: c.req.path,
+        method: c.req.method,
+        ip: c.req.header('cf-connecting-ip'),
+        user_agent: c.req.header('user-agent'),
+        timestamp: new Date().toISOString(),
+    }
+
+    // Log the request to an external API location
+    const log_promise = fetch(logging_endpoint, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(log_payload),
+    })
+
+    // Run this async task in the background
+    c.executionCtx?.waitUntil(log_promise);
+})
+
 app.get('/:dir{(css|img)}/:key', async (c) => {
     const key = `${c.req.param("dir")}/${c.req.param("key")}`;
     const object = await c.env.R2_BUCKET.get(key);

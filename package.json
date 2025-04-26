@@ -2,6 +2,7 @@
   "name": "kyoobit",
   "scripts": {
     "dev": "wrangler dev",
+    "secret": "wrangler secret",
     "deploy": "wrangler deploy --minify"
   },
   "dependencies": {
