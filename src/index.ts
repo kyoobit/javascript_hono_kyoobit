@@ -10,6 +10,7 @@ app.use('*', async (c, next) => {
 
     // Log this information
     const log_payload = {
+        domain: c.req.header('host'),
         path: c.req.path,
         method: c.req.method,
         ip: c.req.header('cf-connecting-ip'),
@@ -18,16 +19,27 @@ app.use('*', async (c, next) => {
     }
 
     // Log the request to an external API location
-    const log_promise = fetch(logging_endpoint, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(log_payload),
-    })
+    if (logging_endpoint) {
+        const log_promise = fetch(logging_endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'User-Agent': `cf-worker-${c.req.header('host')}`,
+            },
+            body: JSON.stringify(log_payload),
+        })
+        .then(async res => {
+            console.log('Logging API POST status:', res.status);
+            if (!res.ok) {
+                console.error('Logging API failed response:', await res.text());
+            }
+        })
+        .catch((err) => {
+            console.error('Logging API POST fetch error:', err);
+        });
 
-    // Run this async task in the background
-    c.executionCtx?.waitUntil(log_promise);
+        c.executionCtx?.waitUntil(log_promise);
+    }
 })
 
 app.get('/:dir{(css|img)}/:key', async (c) => {
@@ -57,7 +69,7 @@ app.get('/:dir{(css|img)}/:key', async (c) => {
     return c.body(data, 200, headers);
 });
 
-app.get('/', (c) => {
+app.get('/', async (c) => {
 
     // Data used in the HTML content template
     const data = {
