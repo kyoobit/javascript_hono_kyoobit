@@ -6,6 +6,10 @@ import { getSecureHeaders } from '@helpers/headers';
 
 const app = new Hono();
 
+function generateNonce() {
+    return btoa(Math.random().toString(36).substring(2, 15));
+}
+
 app.use('*', async (c, next) => {
     await next()
 
@@ -75,6 +79,7 @@ app.get('/:dir{(css|img)}/:key', async (c) => {
 app.get('/', async (c) => {
 
     // Data used in the HTML content template
+    const nonce = generateNonce();
     const data = {
         title: "kyoobit (qubit)",
         domain: "www.kyoobit.net",
@@ -83,6 +88,12 @@ app.get('/', async (c) => {
         pronunciation: "\u0060ky\u00F6obit",
         explanation: 'another term for a "quantum bit", the basic unit of information in a quantum\u00A0computer.',
         meta: "Computing: (noun)",
+        css: {
+          path: '/css/main.css',
+          // echo "sha384-$(shasum -b -a 384 public/css/main.css | awk '{ print $1 }' | xxd -r -p | base64)"
+          integrity: 'sha384-iaea82lf0S3vkHlJ5nA90SW2xwrE0d8SnrwpfsbGdSB4pEwhRqbM4dIk6lv0ikL5',
+        },
+        nonce: nonce,
     };
 
     // HTML content template
@@ -96,6 +107,7 @@ app.get('/', async (c) => {
         // hash=$(shasum -b -a 384 FILENAME.js | awk '{ print $1 }' | xxd -r -p | base64)
         // echo "sha384-${hash}"
         script_hashes: [
+            `'nonce-${nonce}'`,
             // 'sha384-<HASH VALUE>',
         ],
     });
@@ -103,7 +115,7 @@ app.get('/', async (c) => {
     // Cross-Origin Resource Sharing (CORS) HTTP response headers
     // https://developer.mozilla.org/en-US/docs/Web/Security/Practical_implementation_guides/CORS
     // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Allow-Origin
-    //headers['Access-Control-Allow-Origin'] = `https://${data.domain}/`;
+    headers['Access-Control-Allow-Origin'] = `https://${c.req.header('host')}/`;
 
     // https://hono.dev/docs/helpers/html
     return c.html(content, 200, headers);
