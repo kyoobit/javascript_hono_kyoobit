@@ -1,8 +1,56 @@
 import { Hono } from 'hono';
 import { html, raw } from 'hono/html';
 
+import { homepage } from '@templates/homepage';
+import { getSecureHeaders } from '@helpers/headers';
+
 const app = new Hono();
 
+function generateNonce() {
+    return btoa(Math.random().toString(36).substring(2, 15));
+}
+
+// Middleware to log requests to an API
+app.use('*', async (c, next) => {
+    await next()
+
+    const logging_endpoint = c.env.LOGGING_ENDPOINT;
+
+    // Log this information
+    const log_payload = {
+        domain: c.req.header('host'),
+        path: c.req.path,
+        method: c.req.method,
+        ip: c.req.header('cf-connecting-ip'),
+        user_agent: c.req.header('user-agent'),
+        timestamp: new Date().toISOString(),
+    }
+
+    // Log the request to an external API location
+    if (logging_endpoint) {
+        const log_promise = fetch(logging_endpoint, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'User-Agent': `cf-worker-${c.req.header('host')}`,
+            },
+            body: JSON.stringify(log_payload),
+        })
+        .then(async res => {
+            console.log('Logging API POST status:', res.status);
+            if (!res.ok) {
+                console.error('Logging API failed response:', await res.text());
+            }
+        })
+        .catch((err) => {
+            console.error('Logging API POST fetch error:', err);
+        });
+
+        c.executionCtx?.waitUntil(log_promise);
+    }
+})
+
+// Handle generic directory level mapping to object storage
 app.get('/:dir{(css|img)}/:key', async (c) => {
     const key = `${c.req.param("dir")}/${c.req.param("key")}`;
     const object = await c.env.R2_BUCKET.get(key);
@@ -30,9 +78,42 @@ app.get('/:dir{(css|img)}/:key', async (c) => {
     return c.body(data, 200, headers);
 });
 
-app.get('/', (c) => {
+// Handle specific file mappings to object storage
+app.on('GET', [
+    '/favicon.ico',
+    '/robots.txt',
+], async (c) => {
+    const path = c.req.path.slice(1);
+    const object = await c.env.R2_BUCKET.get(path);
+
+    if (!object) return c.notFound();
+
+    const data = await object.arrayBuffer();
+
+    // HTTP response headers
+    let headers = {};
+
+    // Cache Control HTTP response header
+    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cache-Control
+    headers['Cache-Control'] = 'max-age=900';
+
+    // Content Type HTTP response header
+    https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Type
+    headers['Content-Type'] = object.httpMetadata?.contentType || 'text/plain';
+
+    // ETag HTTP response header
+    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/ETag
+    headers['ETag'] = object.httpEtag;
+
+    // https://hono.dev/docs/helpers/html
+    return c.body(data, 200, headers);
+});
+
+// Handle the root index
+app.get('/', async (c) => {
 
     // Data used in the HTML content template
+    const nonce = generateNonce();
     const data = {
         title: "kyoobit (qubit)",
         domain: "www.kyoobit.net",
@@ -41,90 +122,34 @@ app.get('/', (c) => {
         pronunciation: "\u0060ky\u00F6obit",
         explanation: 'another term for a "quantum bit", the basic unit of information in a quantum\u00A0computer.',
         meta: "Computing: (noun)",
+        css: {
+          path: '/css/main.css',
+          // echo "sha384-$(shasum -b -a 384 public/css/main.css | awk '{ print $1 }' | xxd -r -p | base64)"
+          integrity: 'sha384-iaea82lf0S3vkHlJ5nA90SW2xwrE0d8SnrwpfsbGdSB4pEwhRqbM4dIk6lv0ikL5',
+        },
+        nonce: nonce,
     };
 
     // HTML content template
-    const content = html`<!doctype html>
-<html lang="en">
-<head>
-    <title>${data.title}</title>
-    <link rel="canonical" href="https://${data.domain}/" />
-    <meta name="description" content="${data.description}">
-    <meta charset="utf-8">
-    <meta http-equiv="x-ua-compatible" content="ie=edge">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <link rel="stylesheet" type="text/css" href="/css/main.css" 
-        integrity="sha384-iaea82lf0S3vkHlJ5nA90SW2xwrE0d8SnrwpfsbGdSB4pEwhRqbM4dIk6lv0ikL5" />
-</head>
-<body>
-    <section id="container">
-        <article class="definition container">
-            <h1 class="word">
-                ${data.word}
-                <strong class="pronunciation">${data.pronunciation}</strong>
-            </h1>
-            <p class="explanation">
-                <span class="meta">${data.meta}</span> ${data.explanation}
-            </p>
-        </article>
-    </section>
-</body>
-</html>
-`
+    const content = homepage(data);
 
-    // HTTP response headers
-    let headers = {};
+    // HTTP headers helper
+    const headers = getSecureHeaders({
+        // Subresource Integrity
+        // https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity
+        // hash=$(cat FILENAME.js | openssl dgst -sha384 -binary | openssl base64 -A)
+        // hash=$(shasum -b -a 384 FILENAME.js | awk '{ print $1 }' | xxd -r -p | base64)
+        // echo "sha384-${hash}"
+        script_hashes: [
+            `'nonce-${nonce}'`,
+            // 'sha384-<HASH VALUE>',
+        ],
+    });
 
     // Cross-Origin Resource Sharing (CORS) HTTP response headers
     // https://developer.mozilla.org/en-US/docs/Web/Security/Practical_implementation_guides/CORS
     // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Access-Control-Allow-Origin
-    //headers['Access-Control-Allow-Origin'] = `https://${data.domain}/`;
-
-    // https://developer.mozilla.org/en-US/observatory/analyze
-
-    // Subresource Integrity
-    // https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity
-    // hash=$(cat FILENAME.js | openssl dgst -sha384 -binary | openssl base64 -A)
-    // hash=$(shasum -b -a 384 FILENAME.js | awk '{ print $1 }' | xxd -r -p | base64)
-    // echo "sha384-${hash}"
-    let script_integrity_hashes = [
-        // 'sha384-<HASH VALUE>',
-    ].join(' ');
-
-    // Content Security Policy (CSP) HTTP response header
-    // https://developer.mozilla.org/en-US/docs/Web/Security/Practical_implementation_guides/CSP
-    // https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP
-    // https://csp-evaluator.withgoogle.com
-    headers['Content-Security-Policy'] = [
-        "default-src 'self' https:", // load resources that are from the same-origin as the document using https only
-        //`image-src 'self' ${data.domain}`,
-        //`style-src 'self' ${data.domain}`,
-        `script-src 'strict-dynamic' https: ${script_integrity_hashes}`, // 'strict-dynamic': Allow trusted scripts to load additional scripts
-        "object-src 'none'", // block all <object> and <embed> resources
-        "base-uri 'none'", // block all uses of the <base> element to set a base URI
-        // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Content-Security-Policy/require-trusted-types-for
-        "require-trusted-types-for 'script'",
-    ].join('; ');
-
-    // MIME types HTTP response header
-    // https://developer.mozilla.org/en-US/docs/Web/Security/Practical_implementation_guides/MIME_types
-    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Content-Type-Options
-    headers['X-Content-Type-Options'] = 'nosniff';
-
-    // Clickjacking HTTP response header
-    // https://developer.mozilla.org/en-US/docs/Web/Security/Practical_implementation_guides/Clickjacking
-    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Frame-Options
-    headers['X-Frame-Options'] = 'DENY';
-
-    // Referrer policy HTTP response header
-    // https://developer.mozilla.org/en-US/docs/Web/Security/Practical_implementation_guides/Referrer_policy
-    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Referrer-Policy
-    headers['Referrer-Policy'] = 'same-origin'; // send the Referrer header, but only on same-origin requests
-
-    // Cross-Origin Resource Policy (CORP) HTTP response header
-    // https://developer.mozilla.org/en-US/docs/Web/Security/Practical_implementation_guides/CORP
-    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Cross-Origin-Resource-Policy
-    headers['Cross-Origin-Resource-Policy'] = 'same-origin'; // limits resource access to requests coming from the same origin
+    headers['Access-Control-Allow-Origin'] = `https://${c.req.header('host')}/`;
 
     // https://hono.dev/docs/helpers/html
     return c.html(content, 200, headers);
