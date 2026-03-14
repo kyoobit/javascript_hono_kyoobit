@@ -1,12 +1,12 @@
 {
-  "name": "kyoobit",
+  "name": "javascript_hono_kyoobit",
   "scripts": {
     "dev": "wrangler dev",
     "secret": "wrangler secret",
     "deploy": "wrangler deploy --minify"
   },
   "dependencies": {
-    "hono": "^4.12.5"
+    "hono": "^4.12.8"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241218.0",
